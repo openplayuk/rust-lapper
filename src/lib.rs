@@ -272,6 +272,50 @@ where
         self.overlaps_merged = false;
     }
 
+    /// Bulk in-place update: drop intervals failing `retain_predicate`, then
+    /// append `new_intervals`. Reuses the existing `intervals`/`starts`/`stops`
+    /// allocations — no scratch buffers — and re-sorts in place. Intended for
+    /// incremental rebuilds that would otherwise discard and re-create the
+    /// `Lapper`.
+    ///
+    /// SIDE EFFECTS: This clears cov() and overlaps_merged.
+    pub fn update_in_place<F, I2>(&mut self, mut retain_predicate: F, new_intervals: I2)
+    where
+        F: FnMut(&Interval<I, T>) -> bool,
+        I2: IntoIterator<Item = Interval<I, T>>,
+    {
+        self.intervals.retain(&mut retain_predicate);
+        self.intervals.extend(new_intervals);
+
+        self.starts.clear();
+        self.stops.clear();
+        self.starts.extend(self.intervals.iter().map(|iv| iv.start));
+        self.stops.extend(self.intervals.iter().map(|iv| iv.stop));
+
+        #[cfg(feature = "sort_unstable")]
+        {
+            self.intervals.sort_unstable();
+            self.starts.sort_unstable();
+            self.stops.sort_unstable();
+        }
+        #[cfg(not(feature = "sort_unstable"))]
+        {
+            self.intervals.sort();
+            self.starts.sort();
+            self.stops.sort();
+        }
+
+        self.max_len = self
+            .intervals
+            .iter()
+            .map(|iv| iv.stop.checked_sub(&iv.start).unwrap_or_else(zero::<I>))
+            .max()
+            .unwrap_or_else(zero::<I>);
+
+        self.cov = None;
+        self.overlaps_merged = false;
+    }
+
     /// Get the number over intervals in Lapper
     /// ```
     /// use rust_lapper::{Lapper, Interval};
